@@ -23,6 +23,8 @@ _GOAL_STATUS_TEXT = {
 
 # 각 토픽의 마지막 수신으로부터 이 시간(초)이 지나면 "연결 끊김"으로 표시
 WATCHDOG_TIMEOUT_SEC = 3.0
+# 이 시간(초)이 지나도록 수신이 없으면(끊김까지는 아니지만) "불안정"으로 표시
+UNSTABLE_TIMEOUT_SEC = WATCHDOG_TIMEOUT_SEC / 2
 
 # OpenCR 펌웨어의 BatteryState.percentage 필드는 실제 잔량과 무관하게 항상 100%에
 # 가깝게 보고되는 알려진 문제가 있어(voltage 필드만 정확), 전압으로 직접 계산한다.
@@ -66,7 +68,7 @@ class RosBridge(QObject):
     battery_updated = pyqtSignal(float, float)  # percentage(0-1), voltage(V)
     odom_updated = pyqtSignal(float, float, float, float, float)  # x, y, yaw, lin_vel, ang_vel
     scan_updated = pyqtSignal(float)  # min_range(m)
-    link_state_changed = pyqtSignal(str, bool)  # topic_name, connected
+    link_state_changed = pyqtSignal(str, str)  # topic_name, state('up'/'unstable'/'down')
     log_event = pyqtSignal(str, str)  # level, message
 
     nav_status_changed = pyqtSignal(str)  # 사람이 읽을 수 있는 주행 상태 문구
@@ -88,11 +90,16 @@ class TurtlebotNode(Node):
             'odom': None,
             'scan': None,
         }
-        self._link_up = {
-            'battery_state': False,
-            'odom': False,
-            'scan': False,
+        # 'up' / 'unstable' / 'down' / None(아직 평가 전, 유예 시간 중).
+        # None으로 시작해야 유예 시간이 지나 'down'으로 확정될 때 실제로 상태가
+        # 바뀐 것으로 인식되어 신호가 발생한다(둘 다 'down'이면 변화가 없다고
+        # 판단해 끊김 신호 자체가 발생하지 않는 문제가 있었다).
+        self._link_state = {
+            'battery_state': None,
+            'odom': None,
+            'scan': None,
         }
+        self._node_start = time.monotonic()
 
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.initial_pose_pub = self.create_publisher(
@@ -112,9 +119,9 @@ class TurtlebotNode(Node):
 
     def _touch(self, key):
         self._last_seen[key] = time.monotonic()
-        if not self._link_up[key]:
-            self._link_up[key] = True
-            self.bridge.link_state_changed.emit(key, True)
+        if self._link_state[key] != 'up':
+            self._link_state[key] = 'up'
+            self.bridge.link_state_changed.emit(key, 'up')
 
     def _on_battery(self, msg: BatteryState):
         self._touch('battery_state')
@@ -140,11 +147,24 @@ class TurtlebotNode(Node):
     def _check_watchdog(self):
         now = time.monotonic()
         for key, last in self._last_seen.items():
-            if not self._link_up[key]:
-                continue
-            if last is None or (now - last) > WATCHDOG_TIMEOUT_SEC:
-                self._link_up[key] = False
-                self.bridge.link_state_changed.emit(key, False)
+            if last is None:
+                # 기동 후 한 번도 메시지를 받은 적이 없는 경우: 유예 시간 후 끊김 확정.
+                # 유예 시간 중에는 상태를 그대로 유지(None)하여 신호를 보내지 않는다.
+                if (now - self._node_start) > WATCHDOG_TIMEOUT_SEC:
+                    new_state = 'down'
+                else:
+                    new_state = self._link_state[key]
+            else:
+                age = now - last
+                if age > WATCHDOG_TIMEOUT_SEC:
+                    new_state = 'down'
+                elif age > UNSTABLE_TIMEOUT_SEC:
+                    new_state = 'unstable'
+                else:
+                    new_state = 'up'
+            if new_state != self._link_state[key]:
+                self._link_state[key] = new_state
+                self.bridge.link_state_changed.emit(key, new_state)
 
     def send_velocity(self, linear: float, angular: float):
         twist = Twist()

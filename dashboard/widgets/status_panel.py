@@ -73,11 +73,17 @@ class StatusPanel(QWidget):
         root.setRowStretch(3, 1)
         self.setLayout(root)
 
-    def set_link_state(self, key: str, connected: bool):
+    _LINK_STATE_COLOR = {
+        'up': "#2e7d32",       # 정상 수신 중: 초록
+        'unstable': "#c62828",  # 연결됐지만 수신 지연/불안정: 빨강
+        'down': "#888888",      # 연결 끊김: 회색
+    }
+
+    def set_link_state(self, key: str, state: str):
         label = self.link_labels.get(key)
         if label is None:
             return
-        color = "#2e7d32" if connected else "#c62828"
+        color = self._LINK_STATE_COLOR.get(state, self._LINK_STATE_COLOR['down'])
         label.setStyleSheet(
             f"color: white; background-color: {color}; padding: 2px 8px; border-radius: 4px;"
         )

@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
 
         self._battery_low_notified = False
         self._obstacle_notified = False
-        self._link_status = {key: False for key in LINK_NAME_KO}
+        self._link_status = {key: 'down' for key in LINK_NAME_KO}
 
         self._connect_signals()
 
@@ -94,11 +94,17 @@ class MainWindow(QMainWindow):
     def _update_header(self):
         model = os.environ.get("TURTLEBOT3_MODEL", "알 수 없음")
         domain_id = os.environ.get("ROS_DOMAIN_ID", "0")
-        if all(self._link_status.values()):
+        down = [LINK_NAME_KO[k] for k, state in self._link_status.items() if state == 'down']
+        unstable = [LINK_NAME_KO[k] for k, state in self._link_status.items() if state == 'unstable']
+        if not down and not unstable:
             state_text = "모든 토픽 정상 수신 중"
         else:
-            down = [LINK_NAME_KO[k] for k, up in self._link_status.items() if not up]
-            state_text = f"연결 끊김: {', '.join(down)}"
+            parts = []
+            if down:
+                parts.append(f"연결 끊김: {', '.join(down)}")
+            if unstable:
+                parts.append(f"연결 이상: {', '.join(unstable)}")
+            state_text = " / ".join(parts)
         self.header_label.setText(
             f"모델: {model}  |  ROS_DOMAIN_ID: {domain_id}  |  {state_text}"
         )
@@ -125,14 +131,19 @@ class MainWindow(QMainWindow):
         else:
             self._obstacle_notified = False
 
-    def _on_link_state_changed(self, key: str, connected: bool):
-        self.status_panel.set_link_state(key, connected)
-        self._link_status[key] = connected
+    _LINK_STATE_LOG = {
+        'up': ("INFO", "연결됨"),
+        'unstable': ("WARN", "연결 불안정 (수신 지연)"),
+        'down': ("ERROR", "연결 끊김"),
+    }
+
+    def _on_link_state_changed(self, key: str, state: str):
+        self.status_panel.set_link_state(key, state)
+        self._link_status[key] = state
         self._update_header()
         name = LINK_NAME_KO.get(key, key)
-        level = "INFO" if connected else "ERROR"
-        state = "연결됨" if connected else "연결 끊김"
-        self.log_panel.add_event(level, f"{name} {state}")
+        level, text = self._LINK_STATE_LOG.get(state, ("ERROR", state))
+        self.log_panel.add_event(level, f"{name} {text}")
 
     def _on_velocity_requested(self, linear: float, angular: float):
         node = self.ros_thread.node
