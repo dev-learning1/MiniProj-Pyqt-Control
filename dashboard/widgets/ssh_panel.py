@@ -34,6 +34,39 @@ _LAUNCH_CMD_TMPL = (
     "disown"
 )
 
+# 음성 안내 노드(tb3_voice_notifier)가 이미 떠 있는지 확인하는 패턴.
+# _CHECK_CMD와 마찬가지로 첫 글자를 문자 클래스로 감싸 자기 자신을 오탐하지 않게 한다.
+_VOICE_CHECK_CMD = 'pgrep -f "[v]oice_notifier" >/dev/null 2>&1; echo $?'
+
+# run_voice.sh와 동일한 방식으로 음성 안내 노드를 백그라운드 실행.
+# bringup과 같은 ROS_DOMAIN_ID로 띄워야 서로 같은 DDS 그래프에서 보인다
+# (안 그러면 기본값 도메인 0으로 떠서 bringup/대시보드와 서로 못 본다).
+_VOICE_LAUNCH_CMD_TMPL = (
+    "setsid nohup bash -c '"
+    "source /opt/ros/humble/setup.bash; "
+    "source ~/ros2_ws/install/setup.bash; "
+    "export ROS_DOMAIN_ID={domain_id}; "
+    "exec ros2 run tb3_voice voice_notifier"
+    "' > $HOME/voice_dashboard.log 2>&1 < /dev/null &\n"
+    "disown"
+)
+
+# bringup을 새로 띄울 때마다 "로봇 동작이 가능합니다" 안내.
+# ~/tb3_voice/tools/announce_system_ready.py가 get_subscription_count()로
+# voice_notifier 구독을 직접 확인한 뒤(ros2 daemon과 무관, `ros2 topic pub`
+# 보다 안정적) 발행하고, publish() 직후 바로 종료하지 않고 잠깐 더 spin해서
+# reliable QoS 전송이 실제로 끝날 시간을 준다(안 그러면 매칭 직후 첫 메시지가
+# 유실될 수 있었다).
+_SYSTEM_READY_ANNOUNCE_CMD_TMPL = (
+    "setsid nohup bash -c '"
+    "source /opt/ros/humble/setup.bash; "
+    "source ~/ros2_ws/install/setup.bash; "
+    "export ROS_DOMAIN_ID={domain_id}; "
+    "python3 ~/tb3_voice/tools/announce_system_ready.py"
+    "' > $HOME/voice_announce.log 2>&1 < /dev/null &\n"
+    "disown"
+)
+
 
 def _resolve_ssh_target(host_input: str):
     """~/.ssh/config에 등록된 Host 별칭이면 실제 hostname/user/port로 풀어준다."""
@@ -81,23 +114,41 @@ class SshBringupWorker(QThread):
         try:
             self.progress.emit("연결됨. bringup 상태 확인 중...")
             _stdin, stdout, _stderr = client.exec_command(_CHECK_CMD, timeout=8)
-            already_running = stdout.read().decode().strip() == '0'
+            bringup_already_running = stdout.read().decode().strip() == '0'
 
-            if already_running:
-                self.finished_result.emit(
-                    True, "로봇에 bringup이 이미 실행 중입니다 (새로 띄우지 않음)."
-                )
-                return
-
-            self.progress.emit("bringup이 꺼져 있어 로봇에서 새로 실행합니다...")
-            model = os.environ.get('TURTLEBOT3_MODEL', 'burger')
-            lds_model = os.environ.get('LDS_MODEL', 'LDS-03')
+            # bringup/음성 노드 모두 같은 도메인에 떠야 서로/대시보드와 보인다.
             domain_id = os.environ.get('ROS_DOMAIN_ID', '50')
-            launch_cmd = _LAUNCH_CMD_TMPL.format(
-                model=model, lds_model=lds_model, domain_id=domain_id
-            )
-            client.exec_command(launch_cmd, timeout=8)
-            self.finished_result.emit(True, "로봇에서 bringup을 새로 실행했습니다.")
+
+            if bringup_already_running:
+                message = "로봇에 bringup이 이미 실행 중입니다 (새로 띄우지 않음)."
+            else:
+                self.progress.emit("bringup이 꺼져 있어 로봇에서 새로 실행합니다...")
+                model = os.environ.get('TURTLEBOT3_MODEL', 'burger')
+                lds_model = os.environ.get('LDS_MODEL', 'LDS-03')
+                launch_cmd = _LAUNCH_CMD_TMPL.format(
+                    model=model, lds_model=lds_model, domain_id=domain_id
+                )
+                client.exec_command(launch_cmd, timeout=8)
+                message = "로봇에서 bringup을 새로 실행했습니다."
+
+            self.progress.emit("음성 안내 노드 상태 확인 중...")
+            _stdin, stdout, _stderr = client.exec_command(_VOICE_CHECK_CMD, timeout=8)
+            voice_already_running = stdout.read().decode().strip() == '0'
+
+            if not voice_already_running:
+                self.progress.emit("음성 안내 노드를 새로 실행합니다...")
+                client.exec_command(
+                    _VOICE_LAUNCH_CMD_TMPL.format(domain_id=domain_id), timeout=8
+                )
+
+            if not bringup_already_running:
+                # bringup을 이번에 새로 띄운 경우 매번 "로봇 동작이 가능합니다" 안내.
+                # (voice_notifier 자체는 상시 프로세스로 두고 재시작하지 않아도 됨)
+                client.exec_command(
+                    _SYSTEM_READY_ANNOUNCE_CMD_TMPL.format(domain_id=domain_id), timeout=8
+                )
+
+            self.finished_result.emit(True, message)
         except Exception as exc:
             self.finished_result.emit(False, f"원격 명령 실행 실패: {exc}")
         finally:

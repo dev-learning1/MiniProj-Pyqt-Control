@@ -11,6 +11,7 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState, LaserScan
+from std_msgs.msg import Empty, Int32
 from nav2_msgs.action import NavigateToPose, FollowWaypoints
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
@@ -110,6 +111,12 @@ class TurtlebotNode(Node):
         self._follow_wp_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
         self._current_goal_handle = None
         self._wp_total = 0
+        self._last_reported_waypoint = 0
+
+        # 로봇(Pi)의 tb3_voice_notifier가 구독해 주행 관련 음성 안내를 재생하는 토픽들.
+        self.voice_start_drive_pub = self.create_publisher(Empty, '/voice/start_drive', 10)
+        self.voice_waypoint_reached_pub = self.create_publisher(Int32, '/voice/waypoint_reached', 10)
+        self.voice_goal_done_pub = self.create_publisher(Empty, '/voice/goal_done', 10)
 
         self.create_subscription(BatteryState, 'battery_state', self._on_battery, sensor_qos)
         self.create_subscription(Odometry, 'odom', self._on_odom, sensor_qos)
@@ -203,6 +210,7 @@ class TurtlebotNode(Node):
 
         self.bridge.log_event.emit('INFO', f'단일 목적지 주행 요청: ({x:.2f}, {y:.2f})')
         self.bridge.nav_status_changed.emit(f'목적지 ({x:.2f}, {y:.2f})로 이동 중...')
+        self.voice_start_drive_pub.publish(Empty())
 
         send_future = self._nav_to_pose_client.send_goal_async(
             goal, feedback_callback=self._on_nav_feedback
@@ -228,6 +236,8 @@ class TurtlebotNode(Node):
         level = 'INFO' if status == GoalStatus.STATUS_SUCCEEDED else 'WARN'
         self.bridge.log_event.emit(level, f'단일 목적지 주행 결과: {text}')
         self.bridge.nav_status_changed.emit(f'대기 중 (마지막 결과: {text})')
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            self.voice_goal_done_pub.publish(Empty())
 
     # --- Nav2: trajectory (/follow_waypoints) ---
     def follow_waypoints(self, poses, frame_id: str = 'map'):
@@ -238,10 +248,12 @@ class TurtlebotNode(Node):
         goal = FollowWaypoints.Goal()
         goal.poses = [make_pose_stamped(x, y, yaw, frame_id, stamp) for (x, y, yaw) in poses]
         self._wp_total = len(goal.poses)
+        self._last_reported_waypoint = 0
 
         self.bridge.log_event.emit('INFO', f'경로 주행 요청: waypoint {self._wp_total}개')
         self.bridge.waypoint_progress.emit(0, self._wp_total)
         self.bridge.nav_status_changed.emit(f'경로 주행 중 (0/{self._wp_total})')
+        self.voice_start_drive_pub.publish(Empty())
 
         send_future = self._follow_wp_client.send_goal_async(
             goal, feedback_callback=self._on_wp_feedback
@@ -251,6 +263,13 @@ class TurtlebotNode(Node):
     def _on_wp_feedback(self, feedback_msg):
         current = int(feedback_msg.feedback.current_waypoint)
         self.bridge.waypoint_progress.emit(current, self._wp_total)
+        # current_waypoint는 "다음에 향할 waypoint의 0-based 인덱스"라, 값이
+        # 증가하는 순간이 곧 그 직전 waypoint(1-based로는 새 current 값)에
+        # 도착한 시점이다. 같은 waypoint에 대해 중복 안내되지 않도록 증가할
+        # 때만 발행한다.
+        if current > self._last_reported_waypoint:
+            self._last_reported_waypoint = current
+            self.voice_waypoint_reached_pub.publish(Int32(data=current))
 
     def _on_wp_goal_response(self, future):
         goal_handle = future.result()
@@ -269,6 +288,7 @@ class TurtlebotNode(Node):
         if status == GoalStatus.STATUS_SUCCEEDED and not missed:
             self.bridge.log_event.emit('INFO', '경로 주행 완료')
             self.bridge.nav_status_changed.emit('대기 중 (마지막 결과: 성공)')
+            self.voice_goal_done_pub.publish(Empty())
         else:
             text = _GOAL_STATUS_TEXT.get(status, f'종료(status={status})')
             detail = f' (놓친 waypoint 인덱스: {missed})' if missed else ''
