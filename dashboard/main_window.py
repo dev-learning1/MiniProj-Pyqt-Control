@@ -11,6 +11,7 @@ from dashboard.widgets.control_panel import ControlPanel
 from dashboard.widgets.log_panel import LogPanel
 from dashboard.widgets.nav_panel import NavPanel
 from dashboard.widgets.map_panel import MapPanel
+from dashboard.widgets.ssh_panel import SshPanel
 
 LOW_BATTERY_THRESHOLD = 0.2
 OBSTACLE_WARN_DISTANCE_M = 0.3
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
         self.map_panel = MapPanel()
         self.nav_panel = NavPanel()
         self.log_panel = LogPanel()
+        self.ssh_panel = SshPanel()
 
         tabs = QTabWidget()
         tabs.addTab(self.status_panel, "로봇 상태")
@@ -50,6 +52,7 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         layout = QVBoxLayout()
+        layout.addWidget(self.ssh_panel)
         layout.addWidget(self.header_label)
         layout.addWidget(tabs)
         central.setLayout(layout)
@@ -87,6 +90,8 @@ class MainWindow(QMainWindow):
         self.map_panel.log_requested.connect(self.log_panel.add_event)
         self.map_panel.saved_to.connect(self.nav_panel.load_from_path)
         self.map_panel.initial_pose_requested.connect(self._on_initial_pose_requested)
+
+        self.ssh_panel.log_requested.connect(self.log_panel.add_event)
 
     def _on_node_ready(self):
         self._update_header()
@@ -181,4 +186,6 @@ class MainWindow(QMainWindow):
         if node is not None:
             node.stop_robot()
         self.ros_thread.stop()
+        # 로컬 SSH 작업 스레드만 정리 — 로봇의 원격 bringup은 그대로 계속 실행됨
+        self.ssh_panel.wait_for_pending_ssh()
         super().closeEvent(event)

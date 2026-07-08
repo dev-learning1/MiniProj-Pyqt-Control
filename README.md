@@ -14,6 +14,7 @@
 - `dashboard/map_loader.py` : nav2 map_server YAML+PGM 로더, 픽셀<->world 좌표 변환
 - `dashboard/widgets/nav_panel.py` : 웨이포인트 주행 탭 — YAML 로드, waypoint/trajectory 콤보박스, 주행/중지 버튼
 - `dashboard/widgets/map_panel.py` : 맵/웨이포인트 생성 탭 — 맵 표시, 클릭+드래그로 waypoint 생성, trajectory 구성, YAML 저장
+- `dashboard/widgets/ssh_panel.py` : 상단 SSH 연결 패널 — 로봇 host/비밀번호 입력 후 접속하면 원격 bringup을 자동 확인/실행
 - Nav2 액션 클라이언트는 `dashboard/ros_bridge.py`의 `TurtlebotNode`에 포함 (`/navigate_to_pose`, `/follow_waypoints`)
 - `launch/dashboard_bringup.launch.py` : Nav2 + 대시보드를 한 번에 띄우는 launch 파일
 - `run.sh` : ROS2 환경 source + launch까지 한 번에 하는 편의 스크립트
@@ -22,7 +23,7 @@
 
 ### 방법 A — Nav2 주행까지 한 번에 (권장)
 
-터틀봇3 bringup(`ros2 launch turtlebot3_bringup robot.launch.py`)이 이미 켜져 있는 상태에서:
+터틀봇3 bringup(`ros2 launch turtlebot3_bringup robot.launch.py`)이 이미 켜져 있는 상태에서 (아직 안 켜져 있다면 대시보드가 뜬 뒤 상단 SSH 패널로 원격 실행할 수 있습니다 — 아래 [로봇 원격 Bringup (SSH)](#로봇-원격-bringup-ssh) 참고):
 
 ```bash
 cd ~/class_project/pyqt_ws
@@ -58,7 +59,7 @@ cd ~/class_project/pyqt_ws
 python3 main.py
 ```
 
-터틀봇3(실물 또는 Gazebo 시뮬레이션)가 켜져 있지 않으면 "로봇 상태" 탭의 연결 표시가 빨간색(연결 끊김)으로 표시되고, "이벤트 로그" 탭에 연결 끊김 기록이 남습니다. 이는 정상 동작입니다.
+터틀봇3(실물 또는 Gazebo 시뮬레이션)가 켜져 있지 않으면 "로봇 상태" 탭의 연결 표시가 회색(연결 끊김)으로 표시되고, "이벤트 로그" 탭에 연결 끊김 기록이 남습니다. 이는 정상 동작입니다. (연결은 됐지만 수신이 불안정할 때는 빨간색으로 표시됩니다.)
 
 시뮬레이션으로 테스트하려면 별도 터미널에서:
 
@@ -70,6 +71,20 @@ ros2 launch turtlebot3_gazebo empty_world.launch.py
 ```
 
 > 참고: Gazebo 시뮬레이션은 `/battery_state`를 발행하지 않을 수 있습니다 (실물 로봇의 `turtlebot3_node`에서만 발행). 이 경우 배터리 표시는 "연결 끊김" 상태로 유지됩니다.
+
+## 로봇 원격 Bringup (SSH)
+
+대시보드 상단에 SSH 연결 패널이 있어, 로봇에 미리 SSH로 접속해서 bringup을 직접 켤 필요 없이 대시보드에서 바로 실행할 수 있습니다.
+
+1. **Host**에 SSH 접속 대상을 입력합니다 (기본값 `aurix`). `~/.ssh/config`에 등록된 Host 별칭이면 자동으로 실제 hostname/사용자명을 읽어옵니다 — 터미널에서 `ssh aurix`로 접속되면 그대로 `aurix`만 입력하면 됩니다.
+2. **Password**에 로봇 SSH 비밀번호를 입력합니다 (키 인증이 이미 설정되어 있다면 빈 값이어도 될 수 있으나, 이 패널은 비밀번호 인증 전용입니다).
+3. "연결 & Bringup 실행"을 누르면:
+   - 로봇에 SSH로 접속해 bringup(`turtlebot3_bringup robot.launch.py`)이 이미 떠 있는지 확인합니다.
+   - **이미 떠 있으면**: 새로 띄우지 않고 넘어갑니다. 같은 로봇에서 bringup이 중복 실행되면 모터/라이다가 충돌할 수 있어, 여러 팀원이 각자 대시보드에서 접속해도 안전하도록 하는 안전장치입니다.
+   - **꺼져 있으면**: 로봇에서 원격으로 새로 실행합니다. 이 프로세스는 대시보드/SSH 세션과 완전히 분리되어 실행되므로, 대시보드를 꺼도 로봇의 bringup은 계속 켜져 있습니다. **끄는 것은 사용자가 로봇에 직접 접속해 수동으로 해야 합니다.**
+4. 진행 상황과 결과는 패널의 상태 문구와 "이벤트 로그" 탭에 함께 남습니다.
+
+로봇 쪽 ROS2 환경이 `/opt/ros/humble/setup.bash` 및 (있다면) `~/turtlebot3_ws/install/setup.bash`와 다른 경로라면 `dashboard/widgets/ssh_panel.py`의 `_LAUNCH_CMD_TMPL`을 실제 경로에 맞게 수정하세요. 원격 bringup이 실패하면 로봇에서 `cat ~/bringup_dashboard.log`로 원인을 확인할 수 있습니다.
 
 ## 조작
 
@@ -119,5 +134,6 @@ trajectories:
 - ROS2 Humble, rclpy, nav2_msgs (시스템에 이미 설치되어 있음)
 - PyQt5 (`/usr/lib/python3/dist-packages/PyQt5`, 시스템에 이미 설치되어 있음)
 - PyYAML, Pillow(PIL) (시스템에 이미 설치되어 있음)
+- paramiko (SSH bringup 패널에서 사용, 시스템에 이미 설치되어 있음: `python3-paramiko`)
 
 별도 pip 설치가 필요하지 않습니다.
