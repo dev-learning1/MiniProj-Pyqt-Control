@@ -1,0 +1,24 @@
+frame_id: map
+waypoints:
+  wp1:
+    x: 3.12
+    y: 1.05
+    yaw: 3.1104
+  wp2:
+    x: 0.92
+    y: 0.925
+    yaw: -1.8158
+  wp3:
+    x: 0.27
+    y: -1.4
+    yaw: -1.603
+  wp4:
+    x: 0.145
+    y: -2.875
+    yaw: -3.1416
+trajectories:
+  first_test:
+  - wp1
+  - wp2
+  - wp3
+  - wp4

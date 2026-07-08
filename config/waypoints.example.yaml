@@ -1,0 +1,14 @@
+# 웨이포인트 주행 탭이 읽는 YAML 형식 예시입니다.
+# 실제 사용할 파일은 이 폴더(config/)에 waypoints.yaml 이름으로 넣거나,
+# GUI의 "찾아보기..." 버튼으로 다른 경로를 선택할 수 있습니다.
+
+frame_id: map  # Nav2 goal의 좌표계 (보통 map)
+
+waypoints:
+  wp1: {x: 1.0, y: 0.5, yaw: 0.0}
+  wp2: {x: 2.0, y: 1.0, yaw: 1.57}
+  wp3: {x: 2.0, y: -1.0, yaw: -1.57}
+
+trajectories:
+  loop1: [wp1, wp2, wp3]
+  back_and_forth: [wp1, wp2, wp1]
