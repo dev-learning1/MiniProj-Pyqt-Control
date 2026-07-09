@@ -72,6 +72,10 @@ class MainWindow(QMainWindow):
 
         self._connect_signals()
 
+        # 시그널 연결이 끝난 뒤에 불러와야 초기 자동 로드 결과가 지도 동기화로
+        # 이어진다(연결 전에 불러오면 waypoints_loaded를 아무도 못 받는다).
+        self.nav_panel.try_autoload()
+
         self.ros_thread.node_ready.connect(self._on_node_ready)
         self.ros_thread.start()
 
@@ -94,6 +98,8 @@ class MainWindow(QMainWindow):
         self.nav_panel.follow_requested.connect(self._on_follow_requested)
         self.nav_panel.cancel_requested.connect(self._on_cancel_requested)
         self.nav_panel.log_requested.connect(self.log_panel.add_event)
+        self.nav_panel.waypoints_loaded.connect(self._on_nav_waypoints_loaded)
+        self.nav_panel.active_waypoint_changed.connect(self.map_panel.set_active_waypoint)
 
         self.map_panel.log_requested.connect(self.log_panel.add_event)
         self.map_panel.saved_to.connect(self.nav_panel.load_from_path)
@@ -202,6 +208,14 @@ class MainWindow(QMainWindow):
 
     def _on_waypoint_progress(self, current: int, total: int):
         self.nav_panel.set_status(f"경로 주행 중 ({current}/{total})")
+        name = self.nav_panel.waypoint_name_at(current)
+        if name:
+            self.map_panel.set_active_waypoint(name)
+
+    def _on_nav_waypoints_loaded(self, path: str):
+        # "웨이포인트 주행" 탭에서 불러온 waypoint를 지도 탭에도 동기화해서,
+        # 어떤 지점으로 주행하는지 지도에서 바로 확인할 수 있게 한다.
+        self.map_panel.merge_waypoints_from_file(path, quiet=True)
 
     def closeEvent(self, event):
         node = self.ros_thread.node

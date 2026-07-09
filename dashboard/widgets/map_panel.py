@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup, QScrollArea
 )
 
+from dashboard import theme
 from dashboard.map_loader import load_map, pixel_to_world, world_to_pixel
 from dashboard.waypoints import load_waypoint_file, save_waypoint_file, WaypointConfigError
 
@@ -92,6 +93,9 @@ class MapPanel(QWidget):
         self.trajectories = {}  # name -> [waypoint 이름, ...]
         self._markers = {}      # name -> [QGraphicsItem, ...]
         self._pose_estimate_items = []
+        # "웨이포인트 주행" 탭에서 현재 실제로 향하고 있는 waypoint 이름.
+        # 지도에서 이 waypoint만 다른 색으로 강조 표시한다.
+        self._active_waypoint_name = None
 
         default_map = os.path.join(DEFAULT_MAPS_DIR, "last_class_map_modi.yaml")
 
@@ -257,6 +261,7 @@ class MapPanel(QWidget):
         self.scene.clear()
         self._markers.clear()
         self._pose_estimate_items = []
+        self._active_waypoint_name = None
         self.waypoint_list.clear()
         self.wp_select_combo.clear()
         pixmap = QPixmap.fromImage(self._meta.image)
@@ -356,16 +361,42 @@ class MapPanel(QWidget):
         for item in self._markers.pop(name, []):
             self.scene.removeItem(item)
 
-        pen = QPen(QColor("red"), 2)
-        dot = self.scene.addEllipse(col - 3, row - 3, 6, 6, pen, QBrush(QColor("red")))
-        dx = math.cos(yaw) * ARROW_LENGTH_PX
-        dy = -math.sin(yaw) * ARROW_LENGTH_PX
+        # "웨이포인트 주행" 탭에서 지금 실제로 향하고 있는 waypoint는 눈에 띄게
+        # 다른 색/크기로 그려서, 지도만 보고도 로봇이 맞는 방향으로 가고
+        # 있는지 바로 확인할 수 있게 한다.
+        highlight = name == self._active_waypoint_name
+        color = QColor(theme.AMBER_TEXT) if highlight else QColor("red")
+        radius = 6 if highlight else 3
+        pen_width = 3 if highlight else 2
+        arrow_scale = 1.4 if highlight else 1.0
+
+        pen = QPen(color, pen_width)
+        dot = self.scene.addEllipse(
+            col - radius, row - radius, radius * 2, radius * 2, pen, QBrush(color)
+        )
+        dx = math.cos(yaw) * ARROW_LENGTH_PX * arrow_scale
+        dy = -math.sin(yaw) * ARROW_LENGTH_PX * arrow_scale
         line = self.scene.addLine(col, row, col + dx, row + dy, pen)
-        label = self.scene.addText(name)
-        label.setDefaultTextColor(QColor("blue"))
-        label.setScale(0.7)
+        label = self.scene.addText(("▶ " if highlight else "") + name)
+        label.setDefaultTextColor(color if highlight else QColor("blue"))
+        label.setScale(0.9 if highlight else 0.7)
         label.setPos(col + 4, row - 16)
         self._markers[name] = [dot, line, label]
+
+    def set_active_waypoint(self, name: str):
+        """현재 주행 목표 waypoint를 지도에서 강조 표시한다.
+
+        nav_panel이 단일 목적지 주행/경로 주행을 시작하거나 경로 상의
+        다음 목표로 넘어갈 때, 그리고 주행이 끝나 대기 상태로 돌아갈 때
+        (name="") 호출된다.
+        """
+        prev = self._active_waypoint_name
+        self._active_waypoint_name = name or None
+        for changed_name in (prev, self._active_waypoint_name):
+            if changed_name and changed_name in self.waypoints and self._meta is not None:
+                x, y, yaw = self.waypoints[changed_name]
+                col, row = world_to_pixel(x, y, self._meta)
+                self._draw_marker(changed_name, col, row, yaw)
 
     def _refresh_waypoint_widgets(self):
         self.waypoint_list.clear()
@@ -441,6 +472,16 @@ class MapPanel(QWidget):
         )
         if not path:
             return
+        self.merge_waypoints_from_file(path)
+
+    def merge_waypoints_from_file(self, path: str, quiet: bool = False):
+        """YAML의 waypoint/trajectory를 지도 위에 병합해서 표시한다.
+
+        "기존 waypoint 파일 불러오기(병합)" 버튼과, "웨이포인트 주행" 탭에서
+        새 파일을 불러왔을 때 지도에 자동으로 동기화하는 용도로 함께 쓰인다.
+        quiet=True면 이벤트 로그를 남기지 않는다(자동 동기화 시 nav_panel이
+        이미 같은 내용을 로그로 남기므로 중복을 피한다).
+        """
         try:
             frame_id, wps, trajs = load_waypoint_file(path)
         except (OSError, WaypointConfigError) as exc:
@@ -456,10 +497,11 @@ class MapPanel(QWidget):
         self.trajectories.update(trajs)
         self._refresh_waypoint_widgets()
         self._refresh_trajectory_list()
-        self.log_requested.emit(
-            "INFO", f"'{os.path.basename(path)}'에서 waypoint {len(wps)}개, "
-                    f"trajectory {len(trajs)}개를 병합했습니다."
-        )
+        if not quiet:
+            self.log_requested.emit(
+                "INFO", f"'{os.path.basename(path)}'에서 waypoint {len(wps)}개, "
+                        f"trajectory {len(trajs)}개를 병합했습니다."
+            )
 
     def _save_as(self):
         if not self.waypoints:
