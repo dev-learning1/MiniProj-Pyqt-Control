@@ -35,6 +35,7 @@ class StatusPanel(QWidget):
         self.battery_bar.setRange(0, 100)
         self.battery_bar.setFormat("%p%")
         self.battery_voltage_label = QLabel("- V")
+        self._battery_pct_display = None
 
         battery_box = QGroupBox("배터리")
         battery_layout = QVBoxLayout()
@@ -88,8 +89,19 @@ class StatusPanel(QWidget):
             f"color: white; background-color: {color}; padding: 2px 8px; border-radius: 4px;"
         )
 
+    # 정수 경계(예: 81.5%) 근처에서 값이 미세하게 오르내리면 round()가 그때마다
+    # 다른 정수를 내놓아 표시가 떨린다. 이미 표시 중인 값에서 이 폭 이상
+    # 벗어나야만 표시를 갱신하는 히스테리시스를 둬서 막는다.
+    _BATTERY_PCT_HYSTERESIS = 0.75
+
     def set_battery(self, percentage: float, voltage: float):
-        pct = max(0, min(100, round(percentage * 100)))
+        raw_pct = max(0.0, min(100.0, percentage * 100))
+        if (
+            self._battery_pct_display is None
+            or abs(raw_pct - self._battery_pct_display) >= 0.5 + self._BATTERY_PCT_HYSTERESIS
+        ):
+            self._battery_pct_display = round(raw_pct)
+        pct = self._battery_pct_display
         self.battery_bar.setValue(pct)
         if pct <= 15:
             self.battery_bar.setStyleSheet("QProgressBar::chunk { background-color: #c62828; }")

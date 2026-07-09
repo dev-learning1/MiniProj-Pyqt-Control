@@ -33,6 +33,13 @@ UNSTABLE_TIMEOUT_SEC = WATCHDOG_TIMEOUT_SEC / 2
 BATTERY_FULL_VOLTAGE = 12.6
 BATTERY_EMPTY_VOLTAGE = 9.9
 
+# 전압 센서 노이즈가 그대로 퍼센트로 전달되면 배터리 바가 매 메시지마다 미세하게
+# 흔들려 보이므로(떨림), 저역통과 필터로 완만하게 만들어 표시한다. 배터리 잔량은
+# 원래 분~시간 단위로 변하는 값이므로 수 초의 시간상수는 체감 반응성에 영향이 없다.
+# (메시지 개수 기준 EMA는 토픽 발행 주기가 빠르면 사실상 필터링이 안 되므로,
+# 경과 시간 기준으로 계산한다.)
+BATTERY_VOLTAGE_TAU_SEC = 5.0
+
 
 def voltage_to_percentage(voltage: float) -> float:
     if voltage <= 0.0:
@@ -101,6 +108,8 @@ class TurtlebotNode(Node):
             'scan': None,
         }
         self._node_start = time.monotonic()
+        self._battery_voltage_ema = None
+        self._battery_voltage_ema_time = None
 
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.initial_pose_pub = self.create_publisher(
@@ -133,8 +142,16 @@ class TurtlebotNode(Node):
     def _on_battery(self, msg: BatteryState):
         self._touch('battery_state')
         voltage = float(msg.voltage)
-        percentage = voltage_to_percentage(voltage)
-        self.bridge.battery_updated.emit(percentage, voltage)
+        now = time.monotonic()
+        if self._battery_voltage_ema is None:
+            self._battery_voltage_ema = voltage
+        else:
+            dt = max(0.0, now - self._battery_voltage_ema_time)
+            alpha = 1.0 - math.exp(-dt / BATTERY_VOLTAGE_TAU_SEC)
+            self._battery_voltage_ema += alpha * (voltage - self._battery_voltage_ema)
+        self._battery_voltage_ema_time = now
+        percentage = voltage_to_percentage(self._battery_voltage_ema)
+        self.bridge.battery_updated.emit(percentage, self._battery_voltage_ema)
 
     def _on_odom(self, msg: Odometry):
         self._touch('odom')
