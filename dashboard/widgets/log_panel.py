@@ -9,10 +9,12 @@ from PyQt5.QtWidgets import (
     QPushButton, QHeaderView, QFileDialog
 )
 
+from dashboard import theme
+
 LEVEL_COLORS = {
-    "INFO": QColor("#1565c0"),
-    "WARN": QColor("#f9a825"),
-    "ERROR": QColor("#c62828"),
+    "INFO": QColor(theme.BLUE_TEXT),
+    "WARN": QColor(theme.AMBER_TEXT),
+    "ERROR": QColor(theme.RED_TEXT),
 }
 
 DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
@@ -54,7 +56,7 @@ class LogPanel(QWidget):
         level_item = QTableWidgetItem(level)
         msg_item = QTableWidgetItem(message)
 
-        color = LEVEL_COLORS.get(level, QColor("#333333"))
+        color = LEVEL_COLORS.get(level, QColor(theme.TEXT_PRIMARY))
         for item in (time_item, level_item, msg_item):
             item.setForeground(color)
 

@@ -5,6 +5,7 @@ import os
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QMainWindow, QTabWidget, QLabel, QWidget, QVBoxLayout
 
+from dashboard import theme
 from dashboard.ros_bridge import RosBridge, RosThread
 from dashboard.widgets.status_panel import StatusPanel
 from dashboard.widgets.control_panel import ControlPanel
@@ -28,7 +29,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         model = os.environ.get("TURTLEBOT3_MODEL", "알 수 없음")
         self.setWindowTitle(f"TurtleBot3 Dashboard ({model})")
-        self.resize(900, 650)
+        self.resize(1100, 780)
+        self.setMinimumSize(760, 560)
 
         self.bridge = RosBridge()
         self.ros_thread = RosThread(self.bridge)
@@ -41,20 +43,25 @@ class MainWindow(QMainWindow):
         self.ssh_panel = SshPanel()
 
         tabs = QTabWidget()
-        tabs.addTab(self.status_panel, "로봇 상태")
         tabs.addTab(self.control_panel, "동작 컨트롤")
         tabs.addTab(self.map_panel, "맵 / 웨이포인트 생성")
         tabs.addTab(self.nav_panel, "웨이포인트 주행")
         tabs.addTab(self.log_panel, "이벤트 로그")
 
         self.header_label = QLabel("ROS2 노드 초기화 중...")
-        self.header_label.setStyleSheet("padding: 6px; font-weight: bold;")
+        self.header_label.setStyleSheet(
+            f"padding: 6px 2px; font-weight: 600; color: {theme.TEXT_SECONDARY};"
+        )
 
         central = QWidget()
+        central.setObjectName("Central")
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(10)
         layout.addWidget(self.ssh_panel)
         layout.addWidget(self.header_label)
-        layout.addWidget(tabs)
+        layout.addWidget(self.status_panel)
+        layout.addWidget(tabs, 1)
         central.setLayout(layout)
         self.setCentralWidget(central)
 

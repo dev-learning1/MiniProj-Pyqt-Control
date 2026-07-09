@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QPushButton
 )
 
+from dashboard import theme
+
 # 원격에서 bringup이 이미 떠 있는지 확인하는 패턴.
 # 같은 로봇에서 bringup이 중복 실행되면 모터/라이다가 겹쳐 충돌할 수 있어,
 # 이미 떠 있으면(다른 팀원 또는 이전 세션) 새로 띄우지 않는다.
@@ -173,7 +175,7 @@ class SshPanel(QWidget):
         self.connect_btn.clicked.connect(self._on_connect_clicked)
 
         self.status_label = QLabel("아직 연결 안 됨")
-        self.status_label.setStyleSheet("color: #888;")
+        self.status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
 
         layout = QHBoxLayout()
         layout.addWidget(QLabel("Host:"))
@@ -201,7 +203,7 @@ class SshPanel(QWidget):
             return
 
         self.connect_btn.setEnabled(False)
-        self._set_status("연결 시도 중...", "#888")
+        self._set_status("연결 시도 중...", theme.TEXT_SECONDARY)
 
         self._worker = SshBringupWorker(host_input, password, self)
         self._worker.progress.connect(self._on_progress)
@@ -209,11 +211,11 @@ class SshPanel(QWidget):
         self._worker.start()
 
     def _on_progress(self, message: str):
-        self._set_status(message, "#888")
+        self._set_status(message, theme.TEXT_SECONDARY)
         self.log_requested.emit("INFO", f"[SSH] {message}")
 
     def _on_finished(self, success: bool, message: str):
-        self._set_status(message, "#2e7d32" if success else "#c62828")
+        self._set_status(message, theme.GREEN_TEXT if success else theme.RED_TEXT)
         self.log_requested.emit("INFO" if success else "ERROR", f"[SSH] {message}")
         self.connect_btn.setEnabled(True)
         self.password_edit.clear()

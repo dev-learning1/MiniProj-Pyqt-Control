@@ -12,10 +12,12 @@ import sys
 from PyQt5.QtWidgets import QApplication
 
 from dashboard.main_window import MainWindow
+from dashboard import theme
 
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyleSheet(theme.APP_STYLESHEET)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

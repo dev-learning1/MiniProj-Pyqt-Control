@@ -4,9 +4,10 @@ import os
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QComboBox,
-    QPushButton, QLineEdit, QFileDialog
+    QPushButton, QLineEdit, QFileDialog, QScrollArea
 )
 
+from dashboard import theme
 from dashboard.waypoints import load_waypoint_file, WaypointConfigError
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -66,12 +67,14 @@ class NavPanel(QWidget):
         traj_box.setLayout(traj_layout)
 
         self.status_label = QLabel("대기 중")
-        self.status_label.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.status_label.setStyleSheet(
+            f"font-weight: 600; padding: 4px; color: {theme.TEXT_SECONDARY};"
+        )
 
         btn_stop = QPushButton("중지 (현재 목표 취소)")
         btn_stop.setMinimumHeight(45)
         btn_stop.setStyleSheet(
-            "background-color: #c62828; color: white; font-weight: bold;"
+            f"background-color: {theme.DANGER_SOLID}; color: white; font-weight: 700;"
         )
         btn_stop.clicked.connect(self.cancel_requested.emit)
 
@@ -82,7 +85,19 @@ class NavPanel(QWidget):
         root.addWidget(self.status_label)
         root.addWidget(btn_stop)
         root.addStretch(1)
-        self.setLayout(root)
+
+        content = QWidget()
+        content.setLayout(root)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(content)
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        self.setLayout(outer)
 
         self._try_autoload()
 

@@ -2,8 +2,10 @@
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QSlider, QSizePolicy
+    QPushButton, QSlider, QSizePolicy, QScrollArea
 )
+
+from dashboard import theme
 
 DEFAULT_MAX_LINEAR = 0.22   # m/s, turtlebot3 burger 기준
 DEFAULT_MAX_ANGULAR = 2.84  # rad/s, turtlebot3 burger 기준
@@ -75,7 +77,8 @@ class ControlPanel(QWidget):
         self.btn_emergency = QPushButton("비상 정지")
         self.btn_emergency.setMinimumHeight(60)
         self.btn_emergency.setStyleSheet(
-            "background-color: #c62828; color: white; font-weight: bold; font-size: 16px;"
+            f"background-color: {theme.DANGER_SOLID}; color: white; "
+            "font-weight: 700; font-size: 16px; border-radius: 8px;"
         )
 
         root = QVBoxLayout()
@@ -84,7 +87,19 @@ class ControlPanel(QWidget):
         root.addWidget(speed_box)
         root.addWidget(self.btn_emergency)
         root.addStretch(1)
-        self.setLayout(root)
+
+        content = QWidget()
+        content.setLayout(root)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(content)
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        self.setLayout(outer)
 
         self._update_speed_labels()
 

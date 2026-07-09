@@ -1,23 +1,53 @@
-"""로봇 상태 모니터링 패널."""
+"""로봇 상태 모니터링 패널.
+
+항상 화면 상단에 고정 노출되는 패널이라, 카드(QGroupBox)형 레이아웃 대신
+얇은 두 줄짜리 바(bar) 형태로 최소한의 공간만 차지하도록 구성한다.
+"""
 import math
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (
-    QWidget, QGridLayout, QGroupBox, QLabel, QProgressBar, QVBoxLayout, QFormLayout
-)
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QFrame
+
+from dashboard import theme
 
 OBSTACLE_WARN_DISTANCE_M = 0.3
 
 
 def _link_label(name: str) -> QLabel:
     label = QLabel(name)
-    label.setStyleSheet("color: white; background-color: #888; padding: 2px 8px; border-radius: 4px;")
+    label.setStyleSheet(theme.pill_qss(theme.GRAY_BG, theme.GRAY_TEXT))
     return label
+
+
+def _caption(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(
+        f"color: {theme.TEXT_SECONDARY}; font-weight: 600; font-size: 8pt;"
+    )
+    return label
+
+
+def _mono_label(text: str, color: str = theme.TEXT_PRIMARY) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(theme.mono_label_qss(color) + "font-size: 9pt;")
+    return label
+
+
+def _divider() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.VLine)
+    line.setStyleSheet(f"color: {theme.BORDER};")
+    return line
 
 
 class StatusPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.setStyleSheet(
+            f"StatusPanel {{ background-color: {theme.BG_SURFACE}; "
+            f"border: 1px solid {theme.BORDER}; border-radius: 8px; }}"
+        )
 
         self.link_labels = {
             'odom': _link_label('ODOM'),
@@ -25,69 +55,82 @@ class StatusPanel(QWidget):
             'scan': _link_label('LIDAR'),
         }
 
-        link_box = QGroupBox("연결 상태")
-        link_layout = QGridLayout()
-        for i, (key, label) in enumerate(self.link_labels.items()):
-            link_layout.addWidget(label, 0, i)
-        link_box.setLayout(link_layout)
+        links_row = QHBoxLayout()
+        links_row.setSpacing(6)
+        for label in self.link_labels.values():
+            links_row.addWidget(label)
 
         self.battery_bar = QProgressBar()
         self.battery_bar.setRange(0, 100)
         self.battery_bar.setFormat("%p%")
-        self.battery_voltage_label = QLabel("- V")
+        self.battery_bar.setFixedWidth(120)
+        self.battery_bar.setFixedHeight(16)
+        self.battery_voltage_label = _mono_label("- V")
         self._battery_pct_display = None
 
-        battery_box = QGroupBox("배터리")
-        battery_layout = QVBoxLayout()
-        battery_layout.addWidget(self.battery_bar)
-        battery_layout.addWidget(self.battery_voltage_label)
-        battery_box.setLayout(battery_layout)
+        battery_row = QHBoxLayout()
+        battery_row.setSpacing(6)
+        battery_row.addWidget(_caption("배터리"))
+        battery_row.addWidget(self.battery_bar)
+        battery_row.addWidget(self.battery_voltage_label)
 
-        self.pose_x_label = QLabel("0.00 m")
-        self.pose_y_label = QLabel("0.00 m")
-        self.pose_yaw_label = QLabel("0.0 °")
-        self.lin_vel_label = QLabel("0.00 m/s")
-        self.ang_vel_label = QLabel("0.00 rad/s")
+        self.lidar_min_label = _mono_label("- m")
 
-        pose_box = QGroupBox("위치 / 속도 (odom)")
-        pose_layout = QFormLayout()
-        pose_layout.addRow("X:", self.pose_x_label)
-        pose_layout.addRow("Y:", self.pose_y_label)
-        pose_layout.addRow("Yaw:", self.pose_yaw_label)
-        pose_layout.addRow("선속도:", self.lin_vel_label)
-        pose_layout.addRow("각속도:", self.ang_vel_label)
-        pose_box.setLayout(pose_layout)
+        lidar_row = QHBoxLayout()
+        lidar_row.setSpacing(6)
+        lidar_row.addWidget(_caption("LiDAR"))
+        lidar_row.addWidget(self.lidar_min_label)
 
-        self.lidar_min_label = QLabel("- m")
-        self.lidar_min_label.setStyleSheet("font-weight: bold;")
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+        top_row.addLayout(links_row)
+        top_row.addWidget(_divider())
+        top_row.addLayout(battery_row)
+        top_row.addWidget(_divider())
+        top_row.addLayout(lidar_row)
+        top_row.addStretch(1)
 
-        lidar_box = QGroupBox("LiDAR 최소 거리")
-        lidar_layout = QVBoxLayout()
-        lidar_layout.addWidget(self.lidar_min_label)
-        lidar_box.setLayout(lidar_layout)
+        self.pose_x_label = _mono_label("0.00 m")
+        self.pose_y_label = _mono_label("0.00 m")
+        self.pose_yaw_label = _mono_label("0.0 °")
+        self.lin_vel_label = _mono_label("0.00 m/s")
+        self.ang_vel_label = _mono_label("0.00 rad/s")
 
-        root = QGridLayout()
-        root.addWidget(link_box, 0, 0, 1, 2)
-        root.addWidget(battery_box, 1, 0)
-        root.addWidget(lidar_box, 1, 1)
-        root.addWidget(pose_box, 2, 0, 1, 2)
-        root.setRowStretch(3, 1)
+        pose_row = QHBoxLayout()
+        pose_row.setSpacing(12)
+        for caption, value_label in (
+            ("X", self.pose_x_label),
+            ("Y", self.pose_y_label),
+            ("Yaw", self.pose_yaw_label),
+            ("선속도", self.lin_vel_label),
+            ("각속도", self.ang_vel_label),
+        ):
+            pair = QHBoxLayout()
+            pair.setSpacing(4)
+            pair.addWidget(_caption(caption))
+            pair.addWidget(value_label)
+            pose_row.addLayout(pair)
+        pose_row.addStretch(1)
+
+        root = QVBoxLayout()
+        root.setContentsMargins(12, 8, 12, 8)
+        root.setSpacing(6)
+        root.addLayout(top_row)
+        root.addLayout(pose_row)
         self.setLayout(root)
 
     _LINK_STATE_COLOR = {
-        'up': "#2e7d32",       # 정상 수신 중: 초록
-        'unstable': "#c62828",  # 연결됐지만 수신 지연/불안정: 빨강
-        'down': "#888888",      # 연결 끊김: 회색
+        'up': (theme.GREEN_BG, theme.GREEN_TEXT),        # 정상 수신 중
+        'unstable': (theme.RED_BG, theme.RED_TEXT),        # 연결됐지만 수신 지연/불안정
+        'down': (theme.GRAY_BG, theme.GRAY_TEXT),          # 연결 끊김
     }
 
     def set_link_state(self, key: str, state: str):
         label = self.link_labels.get(key)
         if label is None:
             return
-        color = self._LINK_STATE_COLOR.get(state, self._LINK_STATE_COLOR['down'])
-        label.setStyleSheet(
-            f"color: white; background-color: {color}; padding: 2px 8px; border-radius: 4px;"
-        )
+        bg, text = self._LINK_STATE_COLOR.get(state, self._LINK_STATE_COLOR['down'])
+        label.setStyleSheet(theme.pill_qss(bg, text))
 
     # 정수 경계(예: 81.5%) 근처에서 값이 미세하게 오르내리면 round()가 그때마다
     # 다른 정수를 내놓아 표시가 떨린다. 이미 표시 중인 값에서 이 폭 이상
@@ -104,11 +147,12 @@ class StatusPanel(QWidget):
         pct = self._battery_pct_display
         self.battery_bar.setValue(pct)
         if pct <= 15:
-            self.battery_bar.setStyleSheet("QProgressBar::chunk { background-color: #c62828; }")
+            fill = theme.RED_TEXT
         elif pct <= 30:
-            self.battery_bar.setStyleSheet("QProgressBar::chunk { background-color: #f9a825; }")
+            fill = theme.AMBER_TEXT
         else:
-            self.battery_bar.setStyleSheet("QProgressBar::chunk { background-color: #2e7d32; }")
+            fill = theme.GREEN_TEXT
+        self.battery_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {fill}; }}")
         self.battery_voltage_label.setText(f"{voltage:.2f} V")
 
     def set_odom(self, x: float, y: float, yaw: float, lin_vel: float, ang_vel: float):
@@ -121,10 +165,8 @@ class StatusPanel(QWidget):
     def set_scan_min(self, min_range: float):
         if math.isinf(min_range):
             self.lidar_min_label.setText("- m")
-            self.lidar_min_label.setStyleSheet("font-weight: bold;")
+            self.lidar_min_label.setStyleSheet(theme.mono_label_qss() + "font-size: 9pt;")
             return
         self.lidar_min_label.setText(f"{min_range:.2f} m")
-        if min_range < OBSTACLE_WARN_DISTANCE_M:
-            self.lidar_min_label.setStyleSheet("font-weight: bold; color: #c62828;")
-        else:
-            self.lidar_min_label.setStyleSheet("font-weight: bold; color: #2e7d32;")
+        color = theme.RED_TEXT if min_range < OBSTACLE_WARN_DISTANCE_M else theme.GREEN_TEXT
+        self.lidar_min_label.setStyleSheet(theme.mono_label_qss(color) + "font-size: 9pt;")

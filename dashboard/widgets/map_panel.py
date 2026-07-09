@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit,
     QPushButton, QComboBox, QListWidget, QListWidgetItem, QGraphicsView,
     QGraphicsScene, QFileDialog, QInputDialog, QMessageBox, QSplitter,
-    QRadioButton, QButtonGroup
+    QRadioButton, QButtonGroup, QScrollArea
 )
 
 from dashboard.map_loader import load_map, pixel_to_world, world_to_pixel
@@ -197,12 +197,17 @@ class MapPanel(QWidget):
         side_layout.addWidget(wp_list_box)
         side_layout.addWidget(traj_build_box)
         side_layout.addWidget(traj_list_box)
-        side_widget = QWidget()
-        side_widget.setLayout(side_layout)
+        side_content = QWidget()
+        side_content.setLayout(side_layout)
+
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QScrollArea.NoFrame)
+        side_scroll.setWidget(side_content)
 
         splitter = QSplitter()
         splitter.addWidget(canvas_widget)
-        splitter.addWidget(side_widget)
+        splitter.addWidget(side_scroll)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
