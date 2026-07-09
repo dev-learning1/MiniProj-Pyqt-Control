@@ -33,6 +33,19 @@ def _mono_label(text: str, color: str = theme.TEXT_PRIMARY) -> QLabel:
     return label
 
 
+def _fmt_zero_safe(value: float, decimals: int) -> str:
+    """반올림 결과가 0이면 부호를 지운다.
+
+    로봇이 정지 상태여도 센서 노이즈로 값이 0 근처에서 미세하게 +/-를
+    오가면, round() 결과가 -0.0이 되어 "-0.00"과 "0.00"이 번갈아 표시되며
+    떨려 보인다. 반올림 후 0이면 음수 0을 양수 0으로 정규화해 막는다.
+    """
+    rounded = round(value, decimals)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:.{decimals}f}"
+
+
 def _divider() -> QFrame:
     line = QFrame()
     line.setFrameShape(QFrame.VLine)
@@ -156,11 +169,11 @@ class StatusPanel(QWidget):
         self.battery_voltage_label.setText(f"{voltage:.2f} V")
 
     def set_odom(self, x: float, y: float, yaw: float, lin_vel: float, ang_vel: float):
-        self.pose_x_label.setText(f"{x:.2f} m")
-        self.pose_y_label.setText(f"{y:.2f} m")
-        self.pose_yaw_label.setText(f"{math.degrees(yaw):.1f} °")
-        self.lin_vel_label.setText(f"{lin_vel:.2f} m/s")
-        self.ang_vel_label.setText(f"{ang_vel:.2f} rad/s")
+        self.pose_x_label.setText(f"{_fmt_zero_safe(x, 2)} m")
+        self.pose_y_label.setText(f"{_fmt_zero_safe(y, 2)} m")
+        self.pose_yaw_label.setText(f"{_fmt_zero_safe(math.degrees(yaw), 1)} °")
+        self.lin_vel_label.setText(f"{_fmt_zero_safe(lin_vel, 2)} m/s")
+        self.ang_vel_label.setText(f"{_fmt_zero_safe(ang_vel, 2)} rad/s")
 
     def set_scan_min(self, min_range: float):
         if math.isinf(min_range):
