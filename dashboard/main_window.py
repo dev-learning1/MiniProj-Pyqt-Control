@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(760, 560)
 
         self.bridge = RosBridge()
-        self.ros_thread = RosThread(self.bridge)
+        self.ros_thread: RosThread | None = None
 
         self.status_panel = StatusPanel()
         self.control_panel = ControlPanel()
@@ -76,10 +76,34 @@ class MainWindow(QMainWindow):
         # 이어진다(연결 전에 불러오면 waypoints_loaded를 아무도 못 받는다).
         self.nav_panel.try_autoload()
 
+        # domain_id=None: 프로세스의 ROS_DOMAIN_ID 환경변수를 그대로 쓴다
+        # (지금까지의 기본 동작 — 보통 "우리 로봇"의 도메인).
+        self._start_ros_thread(domain_id=None)
+
+        self.log_panel.add_event("INFO", "대시보드를 시작했습니다.")
+
+    def _start_ros_thread(self, domain_id: int | None):
+        self.ros_thread = RosThread(self.bridge, domain_id=domain_id)
         self.ros_thread.node_ready.connect(self._on_node_ready)
         self.ros_thread.start()
 
-        self.log_panel.add_event("INFO", "대시보드를 시작했습니다.")
+    def _on_domain_ready(self, domain_id: int):
+        """SSH 패널이 로봇에 성공적으로 접속했을 때 호출: 그 로봇의 도메인으로
+        대시보드 자신의 ROS2 노드를 다시 연결해서, 이제부터 그 로봇의 토픽만
+        보이고 제어되게 한다(같은 도메인을 쓰는 다른 로봇과 명령이 겹치는
+        사고를 막기 위함).
+        """
+        current = os.environ.get("ROS_DOMAIN_ID")
+        if current is not None and current == str(domain_id):
+            return  # 이미 같은 도메인에 붙어 있음
+
+        os.environ["ROS_DOMAIN_ID"] = str(domain_id)
+        self.log_panel.add_event("INFO", f"ROS_DOMAIN_ID={domain_id}(으)로 전환합니다...")
+
+        if self.ros_thread is not None:
+            self.ros_thread.stop()
+        self._start_ros_thread(domain_id=domain_id)
+        self._update_header()
 
     def _connect_signals(self):
         self.bridge.battery_updated.connect(self._on_battery)
@@ -108,6 +132,7 @@ class MainWindow(QMainWindow):
         self.map_panel.initial_pose_requested.connect(self._on_initial_pose_requested)
 
         self.ssh_panel.log_requested.connect(self.log_panel.add_event)
+        self.ssh_panel.domain_ready.connect(self._on_domain_ready)
 
     def _on_node_ready(self):
         self._update_header()

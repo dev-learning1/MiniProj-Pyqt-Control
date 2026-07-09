@@ -356,14 +356,18 @@ class RosThread(QThread):
 
     node_ready = pyqtSignal()
 
-    def __init__(self, bridge: RosBridge, parent=None):
+    def __init__(self, bridge: RosBridge, domain_id: int | None = None, parent=None):
         super().__init__(parent)
         self.bridge = bridge
         self.node: TurtlebotNode | None = None
         self._running = False
+        # None이면 프로세스의 ROS_DOMAIN_ID 환경변수를 그대로 쓴다(기존 동작).
+        # 값이 있으면 그 도메인으로 새 rclpy 컨텍스트를 연다 — 다른 로봇으로
+        # 전환할 때 main_window가 이 스레드를 통째로 새로 만들어 쓴다.
+        self._domain_id = domain_id
 
     def run(self):
-        rclpy.init(args=None)
+        rclpy.init(args=None, domain_id=self._domain_id)
         self.node = TurtlebotNode(self.bridge)
         self._running = True
         self.node_ready.emit()

@@ -4,7 +4,7 @@ import os
 import paramiko
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtWidgets import (
-    QWidget, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QPushButton
+    QWidget, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QPushButton, QSpinBox
 )
 
 from dashboard import theme
@@ -70,8 +70,15 @@ _SYSTEM_READY_ANNOUNCE_CMD_TMPL = (
 )
 
 
-def _resolve_ssh_target(host_input: str):
-    """~/.ssh/config에 등록된 Host 별칭이면 실제 hostname/user/port로 풀어준다."""
+def _resolve_ssh_target(host_input: str, username_override: str = ""):
+    """~/.ssh/config에 등록된 Host 별칭이면 실제 hostname/user/port로 풀어준다.
+
+    username_override가 있으면(사용자가 Username 칸에 직접 입력) 그 값이
+    최우선이다. 없으면 ~/.ssh/config의 User, 그마저 없으면 이 대시보드를
+    실행 중인 로컬 PC의 로그인 계정명을 그대로 쓴다 — 이게 기본 동작이라,
+    로그인 계정명이 다른 로봇에 접속할 땐 반드시 Username을 입력하거나
+    ~/.ssh/config에 그 로봇용 User를 등록해둬야 한다.
+    """
     hostname, username, port = host_input, os.environ.get('USER', 'root'), 22
     config_path = os.path.expanduser('~/.ssh/config')
     if os.path.exists(config_path):
@@ -82,20 +89,30 @@ def _resolve_ssh_target(host_input: str):
         hostname = resolved.get('hostname', hostname)
         username = resolved.get('user', username)
         port = int(resolved.get('port', port))
+    if username_override:
+        username = username_override
     return hostname, username, port
 
 
 class SshBringupWorker(QThread):
     progress = pyqtSignal(str)
+    # SSH 인증까지 성공한 직후 발생: 별칭이 아니라 실제로 붙은 계정/호스트를
+    # 알려줘서, 지금 어느 로봇에 접속했는지 패널에 계속 표시할 수 있게 한다.
+    connected = pyqtSignal(str, str)  # username, hostname(별칭이면 풀어낸 실제 주소)
     finished_result = pyqtSignal(bool, str)  # success, message
 
-    def __init__(self, host_input: str, password: str, parent=None):
+    def __init__(
+        self, host_input: str, password: str, domain_id: int,
+        username_override: str = "", parent=None,
+    ):
         super().__init__(parent)
         self._host_input = host_input
         self._password = password
+        self._domain_id = domain_id
+        self._username_override = username_override
 
     def run(self):
-        hostname, username, port = _resolve_ssh_target(self._host_input)
+        hostname, username, port = _resolve_ssh_target(self._host_input, self._username_override)
 
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -113,16 +130,29 @@ class SshBringupWorker(QThread):
             self.finished_result.emit(False, f"SSH 접속 실패: {exc}")
             return
 
+        self.connected.emit(username, hostname)
+
         try:
             self.progress.emit("연결됨. bringup 상태 확인 중...")
             _stdin, stdout, _stderr = client.exec_command(_CHECK_CMD, timeout=8)
             bringup_already_running = stdout.read().decode().strip() == '0'
 
             # bringup/음성 노드 모두 같은 도메인에 떠야 서로/대시보드와 보인다.
-            domain_id = os.environ.get('ROS_DOMAIN_ID', '50')
+            # 대시보드(내 PC)의 ROS_DOMAIN_ID가 아니라, 이 접속에서 사용자가
+            # 지정한 domain_id를 쓴다 — 그래야 로봇마다 다른 도메인으로 격리해
+            # 여러 로봇이 같은 대시보드 명령을 동시에 받는 사고를 막을 수 있다.
+            domain_id = str(self._domain_id)
 
             if bringup_already_running:
-                message = "로봇에 bringup이 이미 실행 중입니다 (새로 띄우지 않음)."
+                # 이미 떠 있는 프로세스의 실제 ROS_DOMAIN_ID는 우리가 바꿀 수
+                # 없다(누가/언제 띄웠는지 모름). 입력한 domain_id와 실제
+                # 도메인이 다르면 이후 대시보드가 이 도메인으로 붙어도
+                # 로봇이 안 보일 수 있다는 걸 로그로 알려준다.
+                message = (
+                    f"로봇에 bringup이 이미 실행 중입니다 (새로 띄우지 않음). "
+                    f"입력한 Domain ID({domain_id})와 실제 실행 중인 도메인이 다르면 "
+                    f"연결이 안 보일 수 있습니다."
+                )
             else:
                 self.progress.emit("bringup이 꺼져 있어 로봇에서 새로 실행합니다...")
                 model = os.environ.get('TURTLEBOT3_MODEL', 'burger')
@@ -162,27 +192,58 @@ class SshBringupWorker(QThread):
 # 로봇에서 상태(odom/battery/lidar)를 실제로 받아오고 있고 제어(cmd_vel)도
 # 가능한 상태인지를 보여주는 것이다. main_window가 ROS 토픽 수신 상태
 # (odom/battery_state/scan)를 집계해 set_robot_status()로 계속 밀어준다.
+# {target}은 마지막으로 SSH 인증에 성공한 계정@호스트로 채워져서, 여러
+# 로봇을 오가며 접속할 때 지금 어느 로봇 얘기인지 헷갈리지 않게 해준다.
 _ROBOT_STATE_DISPLAY = {
-    'up': ("로봇 연결됨 · 상태 수신 중 · 제어 가능", theme.GREEN_TEXT),
-    'partial': ("로봇 연결 불안정 (일부 상태 수신 지연)", theme.AMBER_TEXT),
-    'down': ("로봇 연결 안 됨 (상태 수신 불가 · 제어 불가)", theme.RED_TEXT),
+    'up': ("{target} 연결됨 · 상태 수신 중 · 제어 가능", theme.GREEN_TEXT),
+    'partial': ("{target} 연결 불안정 (일부 상태 수신 지연)", theme.AMBER_TEXT),
+    'down': ("{target} 연결 안 됨 (상태 수신 불가 · 제어 불가)", theme.RED_TEXT),
 }
 
 
 class SshPanel(QWidget):
     log_requested = pyqtSignal(str, str)  # level, message
+    # SSH 접속(과 필요하면 bringup 실행)까지 성공했을 때 발생: 이 도메인으로
+    # 대시보드 자신의 ROS2 노드를 재연결해야 한다는 신호. main_window가 받아서
+    # RosThread를 이 domain_id로 다시 띄운다 — 그래야 이제부터 이 로봇의
+    # 토픽만 보이고, 다른 로봇(예: 원래 붙어 있던 우리 로봇)은 더는 명령을
+    # 같이 받지 않는다.
+    domain_ready = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker: SshBringupWorker | None = None
         self._robot_state = 'down'
+        # SSH 인증에 한 번도 성공하지 못했으면 아직 어느 로봇인지 모르므로 일반 명칭.
+        self._target_desc = "로봇"
+        self._pending_domain = None
 
         self.host_edit = QLineEdit("aurix")
         self.host_edit.setMaximumWidth(140)
+        self.username_edit = QLineEdit()
+        self.username_edit.setPlaceholderText("비워두면 ~/.ssh/config 또는 내 PC 계정")
+        self.username_edit.setMaximumWidth(200)
+        self.username_edit.returnPressed.connect(self._on_connect_clicked)
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
         self.password_edit.setMaximumWidth(140)
         self.password_edit.returnPressed.connect(self._on_connect_clicked)
+
+        # 로봇마다 서로 다른 ROS_DOMAIN_ID를 쓰게 강제해서, 이 대시보드가
+        # 동시에 여러 로봇의 명령을 같이 받는 사고(같은 도메인이면 DDS가
+        # 토픽/액션을 전부 같이 보고 같이 받는다)를 막는다. 기본값은 지금
+        # 대시보드가 붙어 있는 도메인(보통 "우리 로봇")으로 채워둔다.
+        try:
+            default_domain = int(os.environ.get('ROS_DOMAIN_ID', '50'))
+        except ValueError:
+            default_domain = 50
+        self.domain_spin = QSpinBox()
+        self.domain_spin.setRange(0, 232)
+        self.domain_spin.setValue(default_domain)
+        self.domain_spin.setToolTip(
+            "이 로봇의 ROS_DOMAIN_ID. 로봇마다 서로 다른 값을 써야 동시에 여러\n"
+            "로봇이 같은 명령을 받는 사고를 막을 수 있습니다."
+        )
 
         self.connect_btn = QPushButton("연결 && Bringup 실행")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
@@ -193,8 +254,12 @@ class SshPanel(QWidget):
         layout = QHBoxLayout()
         layout.addWidget(QLabel("Host:"))
         layout.addWidget(self.host_edit)
+        layout.addWidget(QLabel("Username:"))
+        layout.addWidget(self.username_edit)
         layout.addWidget(QLabel("Password:"))
         layout.addWidget(self.password_edit)
+        layout.addWidget(QLabel("Domain ID:"))
+        layout.addWidget(self.domain_spin)
         layout.addWidget(self.connect_btn)
         layout.addWidget(self.status_label, 1)
 
@@ -210,22 +275,29 @@ class SshPanel(QWidget):
         if self._worker is not None and self._worker.isRunning():
             return
         host_input = self.host_edit.text().strip()
+        username_override = self.username_edit.text().strip()
         password = self.password_edit.text()
+        domain_id = self.domain_spin.value()
         if not host_input:
             self.status_label.setText("Host를 입력하세요.")
             return
 
         self.connect_btn.setEnabled(False)
         self._set_status("연결 시도 중...", theme.TEXT_SECONDARY)
+        self._pending_domain = domain_id
 
-        self._worker = SshBringupWorker(host_input, password, self)
+        self._worker = SshBringupWorker(host_input, password, domain_id, username_override, self)
         self._worker.progress.connect(self._on_progress)
+        self._worker.connected.connect(self._on_connected)
         self._worker.finished_result.connect(self._on_finished)
         self._worker.start()
 
     def _on_progress(self, message: str):
         self._set_status(message, theme.TEXT_SECONDARY)
         self.log_requested.emit("INFO", f"[SSH] {message}")
+
+    def _on_connected(self, username: str, hostname: str):
+        self._target_desc = f"{username}@{hostname}"
 
     def _on_finished(self, success: bool, message: str):
         self.log_requested.emit("INFO" if success else "ERROR", f"[SSH] {message}")
@@ -235,6 +307,8 @@ class SshPanel(QWidget):
         # 로봇 상태 표시로 되돌린다(명령이 성공해도 ROS 토픽이 아직 안 붙었으면
         # "제어 가능"이 아니므로 이 라벨에 그 메시지를 그대로 남겨두지 않는다).
         self._render_robot_status()
+        if success and self._pending_domain is not None:
+            self.domain_ready.emit(self._pending_domain)
 
     def _set_status(self, text: str, color: str):
         self.status_label.setText(text)
@@ -248,7 +322,7 @@ class SshPanel(QWidget):
 
     def _render_robot_status(self):
         text, color = _ROBOT_STATE_DISPLAY.get(self._robot_state, _ROBOT_STATE_DISPLAY['down'])
-        self._set_status(text, color)
+        self._set_status(text.format(target=self._target_desc), color)
 
     def wait_for_pending_ssh(self):
         """대시보드 종료 시 로컬 SSH 작업 스레드만 정리한다.
