@@ -157,12 +157,25 @@ class SshBringupWorker(QThread):
             client.close()
 
 
+
+# 이 라벨의 목적은 "SSH bringup 버튼을 눌러봤는지"가 아니라, 지금 이 순간
+# 로봇에서 상태(odom/battery/lidar)를 실제로 받아오고 있고 제어(cmd_vel)도
+# 가능한 상태인지를 보여주는 것이다. main_window가 ROS 토픽 수신 상태
+# (odom/battery_state/scan)를 집계해 set_robot_status()로 계속 밀어준다.
+_ROBOT_STATE_DISPLAY = {
+    'up': ("로봇 연결됨 · 상태 수신 중 · 제어 가능", theme.GREEN_TEXT),
+    'partial': ("로봇 연결 불안정 (일부 상태 수신 지연)", theme.AMBER_TEXT),
+    'down': ("로봇 연결 안 됨 (상태 수신 불가 · 제어 불가)", theme.RED_TEXT),
+}
+
+
 class SshPanel(QWidget):
     log_requested = pyqtSignal(str, str)  # level, message
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker: SshBringupWorker | None = None
+        self._robot_state = 'down'
 
         self.host_edit = QLineEdit("aurix")
         self.host_edit.setMaximumWidth(140)
@@ -174,8 +187,8 @@ class SshPanel(QWidget):
         self.connect_btn = QPushButton("연결 && Bringup 실행")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
 
-        self.status_label = QLabel("아직 연결 안 됨")
-        self.status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+        self.status_label = QLabel()
+        self._render_robot_status()
 
         layout = QHBoxLayout()
         layout.addWidget(QLabel("Host:"))
@@ -215,14 +228,27 @@ class SshPanel(QWidget):
         self.log_requested.emit("INFO", f"[SSH] {message}")
 
     def _on_finished(self, success: bool, message: str):
-        self._set_status(message, theme.GREEN_TEXT if success else theme.RED_TEXT)
         self.log_requested.emit("INFO" if success else "ERROR", f"[SSH] {message}")
         self.connect_btn.setEnabled(True)
         self.password_edit.clear()
+        # SSH 명령 실행 성공/실패 메시지는 로그에만 남기고, 라벨은 바로 실제
+        # 로봇 상태 표시로 되돌린다(명령이 성공해도 ROS 토픽이 아직 안 붙었으면
+        # "제어 가능"이 아니므로 이 라벨에 그 메시지를 그대로 남겨두지 않는다).
+        self._render_robot_status()
 
     def _set_status(self, text: str, color: str):
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {color};")
+
+    def set_robot_status(self, state: str):
+        """main_window가 ROS 토픽 수신 상태를 집계해 호출한다: 'up'/'partial'/'down'."""
+        self._robot_state = state
+        if self._worker is None or not self._worker.isRunning():
+            self._render_robot_status()
+
+    def _render_robot_status(self):
+        text, color = _ROBOT_STATE_DISPLAY.get(self._robot_state, _ROBOT_STATE_DISPLAY['down'])
+        self._set_status(text, color)
 
     def wait_for_pending_ssh(self):
         """대시보드 종료 시 로컬 SSH 작업 스레드만 정리한다.

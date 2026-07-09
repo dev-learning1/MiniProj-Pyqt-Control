@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._battery_low_notified = False
         self._obstacle_notified = False
         self._link_status = {key: 'down' for key in LINK_NAME_KO}
+        self.ssh_panel.set_robot_status(self._robot_ready_state())
 
         self._connect_signals()
 
@@ -102,6 +103,19 @@ class MainWindow(QMainWindow):
 
     def _on_node_ready(self):
         self._update_header()
+
+    def _robot_ready_state(self) -> str:
+        """odom/battery/lidar 토픽 수신 상태를 종합해 로봇 제어 가능 여부를 판단.
+
+        하나라도 완전히 끊겼으면(down) 상태를 못 받아오는 것이니 'down',
+        끊긴 건 없지만 일부가 불안정하면 'partial', 전부 정상이면 'up'.
+        """
+        states = self._link_status.values()
+        if any(s == 'down' for s in states):
+            return 'down'
+        if any(s == 'unstable' for s in states):
+            return 'partial'
+        return 'up'
 
     def _update_header(self):
         model = os.environ.get("TURTLEBOT3_MODEL", "알 수 없음")
@@ -153,6 +167,7 @@ class MainWindow(QMainWindow):
         self.status_panel.set_link_state(key, state)
         self._link_status[key] = state
         self._update_header()
+        self.ssh_panel.set_robot_status(self._robot_ready_state())
         name = LINK_NAME_KO.get(key, key)
         level, text = self._LINK_STATE_LOG.get(state, ("ERROR", state))
         self.log_panel.add_event(level, f"{name} {text}")
