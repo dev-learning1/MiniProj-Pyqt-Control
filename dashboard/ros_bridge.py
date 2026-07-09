@@ -13,6 +13,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState, LaserScan
 from std_msgs.msg import Empty, Int32
 from nav2_msgs.action import NavigateToPose, FollowWaypoints
+from nav2_msgs.msg import SpeedLimit
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
 
@@ -119,6 +120,10 @@ class TurtlebotNode(Node):
         self.initial_pose_pub = self.create_publisher(
             PoseWithCovarianceStamped, 'initialpose', 10
         )
+        # Nav2 controller_server가 기본으로 구독하는 런타임 속도 제한 토픽.
+        # nav2_params YAML(max_vel_x 등)을 고치지 않고도, 여기로 SpeedLimit을
+        # 보내면 controller_server가 즉시 그 비율/절대값으로 속도를 제한한다.
+        self.speed_limit_pub = self.create_publisher(SpeedLimit, 'speed_limit', 10)
 
         self._nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._follow_wp_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
@@ -231,6 +236,16 @@ class TurtlebotNode(Node):
         self.bridge.log_event.emit(
             "INFO", f"초기 위치를 설정했습니다: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}"
         )
+
+    # --- Nav2 런타임 속도 제한 (파라미터 YAML을 고치지 않고 controller_server에
+    # 직접 SpeedLimit을 보내 max_vel_x 등을 즉시 스케일링한다) ---
+    def set_nav_speed_limit(self, percentage: float):
+        """percentage: 0이면 제한 해제(Nav2 설정값 그대로), (0, 100]이면 그 비율로 제한."""
+        msg = SpeedLimit()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.percentage = True
+        msg.speed_limit = float(percentage)
+        self.speed_limit_pub.publish(msg)
 
     # --- Nav2: 단일 목적지 (/navigate_to_pose) ---
     def navigate_to_pose(self, x: float, y: float, yaw: float, frame_id: str = 'map'):

@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self.nav_panel.log_requested.connect(self.log_panel.add_event)
         self.nav_panel.waypoints_loaded.connect(self._on_nav_waypoints_loaded)
         self.nav_panel.active_waypoint_changed.connect(self.map_panel.set_active_waypoint)
+        self.nav_panel.nav_speed_limit_changed.connect(self._on_nav_speed_limit_changed)
 
         self.map_panel.log_requested.connect(self.log_panel.add_event)
         self.map_panel.saved_to.connect(self.nav_panel.load_from_path)
@@ -198,6 +199,11 @@ class MainWindow(QMainWindow):
         node = self.ros_thread.node
         if node is not None:
             node.cancel_current_goal()
+
+    def _on_nav_speed_limit_changed(self, percentage: float):
+        node = self.ros_thread.node
+        if node is not None:
+            node.set_nav_speed_limit(percentage)
 
     def _on_initial_pose_requested(self, x: float, y: float, yaw: float, frame_id: str):
         node = self.ros_thread.node

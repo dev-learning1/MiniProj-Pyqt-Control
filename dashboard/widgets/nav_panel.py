@@ -1,10 +1,10 @@
 """Nav2 웨이포인트 / 트래젝토리 주행 패널."""
 import os
 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QComboBox,
-    QPushButton, QLineEdit, QFileDialog, QScrollArea
+    QPushButton, QLineEdit, QFileDialog, QScrollArea, QSlider
 )
 
 from dashboard import theme
@@ -21,6 +21,7 @@ class NavPanel(QWidget):
     log_requested = pyqtSignal(str, str)
     waypoints_loaded = pyqtSignal(str)       # 불러온 파일 경로 (지도 동기화용)
     active_waypoint_changed = pyqtSignal(str)  # 현재 주행 목표 waypoint 이름("" = 없음)
+    nav_speed_limit_changed = pyqtSignal(float)  # Nav2 런타임 속도 제한(%)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,6 +72,22 @@ class NavPanel(QWidget):
         traj_box = QGroupBox("Trajectory (/follow_waypoints)")
         traj_box.setLayout(traj_layout)
 
+        # Nav2 param YAML(max_vel_x 등)을 고치지 않고, controller_server에
+        # 런타임 SpeedLimit을 보내 주행 속도를 즉시 스케일링한다.
+        self.nav_speed_slider = QSlider(Qt.Horizontal)
+        self.nav_speed_slider.setRange(10, 100)
+        self.nav_speed_slider.setValue(100)
+        self.nav_speed_label = QLabel("100%  (Nav2 설정값 그대로)")
+        self.nav_speed_slider.valueChanged.connect(self._on_nav_speed_changed)
+
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(self.nav_speed_slider)
+        speed_row.addWidget(self.nav_speed_label)
+        speed_layout = QVBoxLayout()
+        speed_layout.addLayout(speed_row)
+        speed_box = QGroupBox("주행 속도 제한 (%)")
+        speed_box.setLayout(speed_layout)
+
         self.status_label = QLabel("대기 중")
         self.status_label.setStyleSheet(
             f"font-weight: 600; padding: 4px; color: {theme.TEXT_SECONDARY};"
@@ -87,6 +104,7 @@ class NavPanel(QWidget):
         root.addWidget(file_box)
         root.addWidget(wp_box)
         root.addWidget(traj_box)
+        root.addWidget(speed_box)
         root.addWidget(self.status_label)
         root.addWidget(btn_stop)
         root.addStretch(1)
@@ -159,6 +177,14 @@ class NavPanel(QWidget):
         seq = self.trajectories.get(name)
         self.trajectory_info_label.setText(" → ".join(seq) if seq else "-")
 
+    # --- 속도 설정 ---
+    def _on_nav_speed_changed(self, value: int):
+        if value >= 100:
+            self.nav_speed_label.setText("100%  (Nav2 설정값 그대로)")
+        else:
+            self.nav_speed_label.setText(f"{value}%")
+        self.nav_speed_limit_changed.emit(float(value))
+
     # --- 버튼 동작 ---
     def _on_navigate_clicked(self):
         name = self.waypoint_combo.currentText()
@@ -169,6 +195,9 @@ class NavPanel(QWidget):
         x, y, yaw = wp
         self._active_trajectory_seq = []
         self.active_waypoint_changed.emit(name)
+        # 슬라이더 값이 이미 실시간으로 반영되고 있지만, 주행 시작 시점에
+        # 한 번 더 보내 controller_server가 확실히 최신 값을 갖게 한다.
+        self.nav_speed_limit_changed.emit(float(self.nav_speed_slider.value()))
         self.navigate_requested.emit(x, y, yaw, self.frame_id)
 
     def _on_follow_clicked(self):
@@ -180,6 +209,7 @@ class NavPanel(QWidget):
         poses = [self.waypoints[wp_name] for wp_name in seq]
         self._active_trajectory_seq = seq
         self.active_waypoint_changed.emit(seq[0])
+        self.nav_speed_limit_changed.emit(float(self.nav_speed_slider.value()))
         self.follow_requested.emit(poses, self.frame_id)
 
     def _on_stop_clicked(self):
