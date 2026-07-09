@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.bridge.nav_status_changed.connect(self.nav_panel.set_status)
         self.bridge.nav_feedback.connect(self._on_nav_feedback)
         self.bridge.waypoint_progress.connect(self._on_waypoint_progress)
+        self.bridge.amcl_pose_updated.connect(self.map_panel.set_robot_pose)
 
         self.control_panel.velocity_requested.connect(self._on_velocity_requested)
         self.control_panel.log_requested.connect(self.log_panel.add_event)

@@ -83,6 +83,10 @@ class RosBridge(QObject):
     nav_feedback = pyqtSignal(float)  # NavigateToPose: 목적지까지 남은 거리(m)
     waypoint_progress = pyqtSignal(int, int)  # FollowWaypoints: (현재 인덱스, 전체 개수)
 
+    # AMCL이 추정한 로봇의 현재 위치(map 좌표계). /odom은 시간이 지나면 map과
+    # 어긋나므로(드리프트) 지도 위에 표시하는 용도로는 쓰지 않는다.
+    amcl_pose_updated = pyqtSignal(float, float, float)  # x, y, yaw
+
 
 class TurtlebotNode(Node):
     def __init__(self, bridge: RosBridge):
@@ -130,6 +134,11 @@ class TurtlebotNode(Node):
         self.create_subscription(BatteryState, 'battery_state', self._on_battery, sensor_qos)
         self.create_subscription(Odometry, 'odom', self._on_odom, sensor_qos)
         self.create_subscription(LaserScan, 'scan', self._on_scan, sensor_qos)
+        # amcl_pose는 Nav2/AMCL이 떠 있을 때만 발행된다(안 떠 있으면 지도 위
+        # 실시간 위치 표시가 그냥 안 나타날 뿐, 연결 끊김 워치독 대상은 아니다).
+        self.create_subscription(
+            PoseWithCovarianceStamped, 'amcl_pose', self._on_amcl_pose, 10
+        )
 
         self.create_timer(0.5, self._check_watchdog)
 
@@ -167,6 +176,12 @@ class TurtlebotNode(Node):
         valid = [r for r in msg.ranges if msg.range_min <= r <= msg.range_max]
         min_range = min(valid) if valid else float('inf')
         self.bridge.scan_updated.emit(min_range)
+
+    def _on_amcl_pose(self, msg: PoseWithCovarianceStamped):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        yaw = quaternion_to_yaw(msg.pose.pose.orientation)
+        self.bridge.amcl_pose_updated.emit(x, y, yaw)
 
     def _check_watchdog(self):
         now = time.monotonic()

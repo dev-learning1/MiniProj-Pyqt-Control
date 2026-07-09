@@ -23,6 +23,9 @@ DISPLAY_SCALE = 2.0        # 화면 확대 배율 (원본 픽셀 = scene 좌표)
 CLICK_VS_DRAG_PX = 5.0     # 이 픽셀 이하로 움직이면 '클릭'(yaw=0)으로 간주
 ARROW_LENGTH_PX = 14.0
 
+ROBOT_MARKER_RADIUS_PX = 5.0
+ROBOT_ARROW_LENGTH_PX = 16.0
+
 MODE_WAYPOINT = "waypoint"
 MODE_POSE_ESTIMATE = "pose_estimate"
 
@@ -96,6 +99,11 @@ class MapPanel(QWidget):
         # "웨이포인트 주행" 탭에서 현재 실제로 향하고 있는 waypoint 이름.
         # 지도에서 이 waypoint만 다른 색으로 강조 표시한다.
         self._active_waypoint_name = None
+        # 로봇의 실시간 위치 마커(점 + 방향선). 매번 새로 그리지 않고
+        # setRect/setLine으로 위치만 갱신해서 odom/amcl_pose 갱신 빈도에도
+        # 부담 없게 한다.
+        self._robot_dot = None
+        self._robot_line = None
 
         default_map = os.path.join(DEFAULT_MAPS_DIR, "last_class_map_modi.yaml")
 
@@ -262,6 +270,11 @@ class MapPanel(QWidget):
         self._markers.clear()
         self._pose_estimate_items = []
         self._active_waypoint_name = None
+        # scene.clear()가 기존 QGraphicsItem을 전부 삭제하므로, 들고 있던
+        # 참조도 같이 비워야 다음 set_robot_pose()에서 죽은 아이템을
+        # setRect/setLine으로 건드리는 걸 막을 수 있다.
+        self._robot_dot = None
+        self._robot_line = None
         self.waypoint_list.clear()
         self.wp_select_combo.clear()
         pixmap = QPixmap.fromImage(self._meta.image)
@@ -397,6 +410,33 @@ class MapPanel(QWidget):
                 x, y, yaw = self.waypoints[changed_name]
                 col, row = world_to_pixel(x, y, self._meta)
                 self._draw_marker(changed_name, col, row, yaw)
+
+    def set_robot_pose(self, x: float, y: float, yaw: float):
+        """AMCL이 추정한 로봇의 현재 위치/방향을 지도 위에 실시간으로 표시한다.
+
+        odom이 아니라 amcl_pose(map 좌표계)를 받아서 그린다 — odom은 시간이
+        지나면 map과 어긋나(드리프트) 지도 위에서 위치가 실제와 달라 보일 수
+        있기 때문이다. Nav2/AMCL이 떠 있지 않으면 이 메서드 자체가 호출되지
+        않으므로 마커도 나타나지 않는다.
+        """
+        if self._meta is None:
+            return
+        col, row = world_to_pixel(x, y, self._meta)
+        dx = math.cos(yaw) * ROBOT_ARROW_LENGTH_PX
+        dy = -math.sin(yaw) * ROBOT_ARROW_LENGTH_PX
+        r = ROBOT_MARKER_RADIUS_PX
+
+        if self._robot_dot is None:
+            color = QColor(theme.ACCENT)
+            pen = QPen(color, 2)
+            self._robot_dot = self.scene.addEllipse(col - r, row - r, r * 2, r * 2, pen, QBrush(color))
+            self._robot_line = self.scene.addLine(col, row, col + dx, row + dy, pen)
+            # waypoint 마커/화살표보다 항상 위에 그려지게 한다.
+            self._robot_dot.setZValue(10)
+            self._robot_line.setZValue(10)
+        else:
+            self._robot_dot.setRect(col - r, row - r, r * 2, r * 2)
+            self._robot_line.setLine(col, row, col + dx, row + dy)
 
     def _refresh_waypoint_widgets(self):
         self.waypoint_list.clear()
